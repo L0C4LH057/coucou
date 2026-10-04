@@ -44,10 +44,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coucou-linux-deb
-          path: windows/src-tauri/target/release/bundle/deb/*.deb
+          path: windows/target/release/bundle/deb/*.deb
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coucou-linux-appimage
-          path: windows/src-tauri/target/release/bundle/appimage/*.AppImage
+          path: windows/target/release/bundle/appimage/*.AppImage
+
