@@ -1,0 +1,51 @@
+name: Linux Release Build (.deb & AppImage)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Ubuntu build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libsecret-1-dev librsvg2-dev
+
+      - name: Build coucou-hook Linux binary & Web frontend
+        run: |
+          cd windows
+          npm install
+          cargo build --release --manifest-path Cargo.toml -p coucou-hook
+          mkdir -p src-tauri/target/release
+          cp target/release/coucou-hook src-tauri/target/release/
+
+      - name: Build Tauri 2 Linux packages (.deb and AppImage)
+        run: |
+          cd windows
+          npm run tauri build
+
+      - name: Upload Debian package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coucou-linux-deb
+          path: windows/src-tauri/target/release/bundle/deb/*.deb
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coucou-linux-appimage
+          path: windows/src-tauri/target/release/bundle/appimage/*.AppImage
