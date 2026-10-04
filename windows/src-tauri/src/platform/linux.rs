@@ -190,9 +190,11 @@ mod layer {
 
     impl LayerShell {
         pub fn open() -> Option<Self> {
-            let container = Container::load("libgtk-layer-shell.so.0")
-                .or_else(|_| Container::load("libgtk-layer-shell.so"))
-                .ok()?;
+            let container = unsafe {
+                Container::load("libgtk-layer-shell.so.0")
+                    .or_else(|_| Container::load("libgtk-layer-shell.so"))
+                    .ok()?
+            };
             Some(Self { container })
         }
 
