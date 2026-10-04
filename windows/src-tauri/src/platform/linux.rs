@@ -162,27 +162,64 @@ pub fn left_button_down() -> bool {
 
 // ── Island window ─────────────────────────────────────────────────────────────
 
-/// The few gtk-layer-shell calls we need, straight from the C library.
+/// The few gtk-layer-shell calls we need, dynamically loaded at runtime.
 mod layer {
     use gtk::ffi::GtkWindow;
     use std::os::raw::{c_char, c_int};
+    use dlopen2::wrapper::{Container, WrapperApi};
 
     pub const LAYER_OVERLAY: c_int = 3;
     pub const EDGE_TOP: c_int = 2;
     pub const KEYBOARD_NONE: c_int = 0;
     pub const KEYBOARD_ON_DEMAND: c_int = 2;
 
-    #[link(name = "gtk-layer-shell")]
-    extern "C" {
-        pub fn gtk_layer_is_supported() -> c_int;
-        pub fn gtk_layer_init_for_window(window: *mut GtkWindow);
-        pub fn gtk_layer_set_namespace(window: *mut GtkWindow, name_space: *const c_char);
-        pub fn gtk_layer_set_layer(window: *mut GtkWindow, layer: c_int);
-        pub fn gtk_layer_set_anchor(window: *mut GtkWindow, edge: c_int, anchor: c_int);
-        pub fn gtk_layer_set_exclusive_zone(window: *mut GtkWindow, zone: c_int);
-        pub fn gtk_layer_set_keyboard_mode(window: *mut GtkWindow, mode: c_int);
+    #[derive(WrapperApi)]
+    pub struct GtkLayerApi {
+        gtk_layer_is_supported: unsafe extern "C" fn() -> c_int,
+        gtk_layer_init_for_window: unsafe extern "C" fn(window: *mut GtkWindow),
+        gtk_layer_set_namespace: unsafe extern "C" fn(window: *mut GtkWindow, name_space: *const c_char),
+        gtk_layer_set_layer: unsafe extern "C" fn(window: *mut GtkWindow, layer: c_int),
+        gtk_layer_set_anchor: unsafe extern "C" fn(window: *mut GtkWindow, edge: c_int, anchor: c_int),
+        gtk_layer_set_exclusive_zone: unsafe extern "C" fn(window: *mut GtkWindow, zone: c_int),
+        gtk_layer_set_keyboard_mode: unsafe extern "C" fn(window: *mut GtkWindow, mode: c_int),
+    }
+
+    pub struct LayerShell {
+        container: Container<GtkLayerApi>,
+    }
+
+    impl LayerShell {
+        pub fn open() -> Option<Self> {
+            let container = Container::load("libgtk-layer-shell.so.0")
+                .or_else(|_| Container::load("libgtk-layer-shell.so"))
+                .ok()?;
+            Some(Self { container })
+        }
+
+        pub fn is_supported(&self) -> bool {
+            unsafe { (self.container.gtk_layer_is_supported)() != 0 }
+        }
+
+        pub fn setup_overlay(&self, window: *mut GtkWindow) {
+            unsafe {
+                (self.container.gtk_layer_init_for_window)(window);
+                (self.container.gtk_layer_set_namespace)(window, c"coucou".as_ptr());
+                (self.container.gtk_layer_set_layer)(window, LAYER_OVERLAY);
+                (self.container.gtk_layer_set_anchor)(window, EDGE_TOP, 1);
+                (self.container.gtk_layer_set_exclusive_zone)(window, -1);
+                (self.container.gtk_layer_set_keyboard_mode)(window, KEYBOARD_NONE);
+            }
+        }
+
+        pub fn set_keyboard_mode(&self, window: *mut GtkWindow, mode: c_int) {
+            unsafe {
+                (self.container.gtk_layer_set_keyboard_mode)(window, mode);
+            }
+        }
     }
 }
+
+static LAYER_SHELL: Mutex<Option<layer::LayerShell>> = Mutex::new(None);
 
 /// True once the island window is a layer-shell surface.
 static LAYER_SURFACE: AtomicBool = AtomicBool::new(false);
@@ -212,7 +249,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
-    let supported = unsafe { layer::gtk_layer_is_supported() } != 0;
+    let layer_shell = layer::LayerShell::open();
+    let supported = layer_shell.as_ref().map(|ls| ls.is_supported()).unwrap_or(false);
     if !wanted || !supported || gw.is_realized() {
         let why = if !wanted {
             "COUCOU_LAYER_SHELL=0"
@@ -237,17 +275,11 @@ pub fn make_non_activating(win: &WebviewWindow) {
     // every map, over ours.
     gw.set_titlebar(None::<&gtk::Widget>);
     let ptr = gtk_window_ptr(&gw);
-    unsafe {
-        layer::gtk_layer_init_for_window(ptr);
-        layer::gtk_layer_set_namespace(ptr, c"coucou".as_ptr());
-        layer::gtk_layer_set_layer(ptr, layer::LAYER_OVERLAY);
-        // Top edge only: the compositor centres the surface horizontally.
-        layer::gtk_layer_set_anchor(ptr, layer::EDGE_TOP, 1);
-        // -1: sit right against the screen edge, over any top panel, the way
-        // the Mac island sits in the notch.
-        layer::gtk_layer_set_exclusive_zone(ptr, -1);
-        layer::gtk_layer_set_keyboard_mode(ptr, layer::KEYBOARD_NONE);
+    if let Some(ref ls) = layer_shell {
+        ls.setup_overlay(ptr);
     }
+    *LAYER_SHELL.lock().unwrap() = layer_shell;
+
     // WebKitGTK in a freshly mapped layer surface never paints its first frame
     // (seen on COSMIC, and reproduced with a bare GTK window + WebKitGTK, no
     // Tauri involved): the surface stays empty. Unmapping and mapping it once,
@@ -278,7 +310,9 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
     gw.set_accept_focus(activating);
     if LAYER_SURFACE.load(Ordering::Relaxed) {
         let mode = if activating { layer::KEYBOARD_ON_DEMAND } else { layer::KEYBOARD_NONE };
-        unsafe { layer::gtk_layer_set_keyboard_mode(gtk_window_ptr(&gw), mode) };
+        if let Some(ref ls) = *LAYER_SHELL.lock().unwrap() {
+            ls.set_keyboard_mode(gtk_window_ptr(&gw), mode);
+        }
     }
 }
 
