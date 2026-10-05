@@ -269,13 +269,17 @@ pub fn make_non_activating(win: &WebviewWindow) {
         };
         crate::log::line(format!("island is a regular window ({why})"));
         gw.set_accept_focus(false);
+        gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
         gw.set_skip_taskbar_hint(true);
         gw.set_skip_pager_hint(true);
+        gw.set_keep_above(true);
         gw.stick();
         return;
     }
+    gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
     gw.set_skip_taskbar_hint(true);
     gw.set_skip_pager_hint(true);
+    gw.set_keep_above(true);
     gw.stick();
     // tao gives undecorated Wayland windows an empty titlebar to force
     // client-side decorations. A layer surface has none, and a client-decorated
