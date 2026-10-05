@@ -1,40 +1,55 @@
-# Goal Verification Report: Coucou Compatibility & Architecture for Ubuntu Linux
+# Implementation Plan - GNOME Shell Top-Bar Anchored Sticky Notch & Global Hover
 
-## Executive Summary
-This document verifies the research, technical design, and code architectural refactoring executed to enable full compatibility for **Coucou on Ubuntu Linux (24.04 LTS Noble Numbat to 26.04 LTS Resilient Ringtail)**.
+## Context & Problem
+Based on the user's screenshot (`Screenshot From 2026-10-05 16-55-01.png`), the Coucou notch window is currently floating in the middle of the screen as a standard window instead of being docked at the top center of the GNOME top bar. Furthermore:
+1. It is not staying pinned across all workspace desktops (`gw.stick()` needs to be reinforced on GTK map & configure events).
+2. It does not collapse to the 6px top wake strip anchored at `y = 0` (or `y = top_bar_height`) that expands on hover across all Linux workspaces.
 
----
+## Root Cause Analysis
+1. **Compositor Anchoring**: Under GNOME (Mutter), standard GTK `set_position()` is ignored by Mutter for Wayland windows unless:
+   - Window hint is `Dock` (`gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock)`).
+   - Window geometry is explicitly calculated relative to the primary monitor top edge ($y = 0$).
+   - The window is connected to GTK's `map-event` and `configure-event` signals to re-apply `gw.stick()`, `set_keep_above(true)`, `set_skip_taskbar_hint(true)`, and `set_skip_pager_hint(true)` every time Mutter re-maps the window.
+2. **Click-Through & Input Region for Hover Expansion**:
+   - On Linux, `CURSOR_POLL` is `false`. Hover expansion depends on GTK Cairo shape combine region (`input_shape_combine_region`).
+   - When collapsed, the input region must be a top-center 240px x 6px (or 16px) strip at $y=0$ anchored to the GNOME top panel.
+   - When the user hovers over this strip, GTK mouse enter events / webview mouseover events trigger `set_collapsed(false)` to smoothly expand Mochi's notch down into the panel view.
 
-## 1. Accomplished Work & Deliverables
+## Execution Plan
 
-### A. Comprehensive Architecture & Linux Blueprint
-Created [`docs/LINUX_ARCHITECTURE.md`](file:///home/localhost/projects/opensource/coucou/docs/LINUX_ARCHITECTURE.md) detailing:
-- **Compositor & Display Integration**: Native support for **GNOME Wayland (Mutter)** and X11 display servers.
-- **Top-Bar & Dynamic Panel Strategy**: Floating island geometry docked below GNOME Shell top panel ($24\text{px} - 32\text{px}$ offset).
-- **System Tray Support**: Integration with `gnome-shell-extension-appindicator` (preinstalled on Ubuntu 24.04+).
-- **Secret Storage Protocol**: D-Bus SecretService API (`gnome-keyring` / `KWallet`) integrated directly via `keyring` Rust crate.
-- **IPC Relay Architecture**: POSIX Unix Domain Sockets (`$XDG_RUNTIME_DIR/coucou.sock` / `/tmp/coucou-<user>.sock`).
-- **Packaging Standard**: AppImage, Debian `.deb`, and Flatpak bundle specifications.
+### Step 1: Reinforce GTK Window Docking & Multi-Workspace Stickiness
+Modify [`windows/src-tauri/src/platform/linux.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/platform/linux.rs):
+- In `make_non_activating(win)`:
+  - Connect a signal handler for `map-event` and `realize` to force:
+    ```rust
+    gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+    gw.set_keep_above(true);
+    gw.stick();
+    gw.set_skip_taskbar_hint(true);
+    gw.set_skip_pager_hint(true);
+    gw.set_accept_focus(false);
+    ```
+  - Connect GTK `enter-notify-event` / `motion-notify-event` on the GTK window widget so hovering over the top wake strip automatically notifies the app to expand the notch when collapsed.
 
-### B. Core Code Base Refactoring for Linux & Cross-Platform Support
-1. **Cross-Platform User & Path Helpers**:
-   - Refactored [`windows/src-tauri/src/win_user.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/win_user.rs) to handle Linux UID/username resolution alongside Windows SIDs.
-   - Refactored [`windows/src-tauri/src/settings.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/settings.rs) to use standard XDG paths (`~/.config/coucou`, `~/.local/share/coucou`) on Linux while maintaining `%APPDATA%` on Windows.
-   - Refactored [`windows/src-tauri/src/log.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/log.rs) for Linux timestamping and standard XDG log directory resolution.
+### Step 2: Ensure Top-Bar Anchoring in `apply_geometry`
+Modify [`windows/src-tauri/src/island.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/island.rs):
+- In `apply_geometry(app, pref, collapsed)`:
+  - Calculate `x = mp.x + (ms.width as i32 - pw as i32) / 2`.
+  - Fix `y = mp.y` (flush against top screen edge $y = 0$).
+  - For Linux GTK window, call `win.set_position(PhysicalPosition::new(x, y))` and re-assert `win.set_always_on_top(true)`.
 
-2. **IPC Subsystem Dispatching & Linux Domain Socket**:
-   - Created IPC dispatcher [`windows/src-tauri/src/pipe/mod.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/pipe/mod.rs).
-   - Created Unix Domain Socket IPC handler [`windows/src-tauri/src/pipe/unix_impl.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/pipe/unix_impl.rs) with socket permission locking (`0700`) and async stream handling.
+### Step 3: Verify Input Region Shapes & Hover State Management
+In `refresh_click_through(app, gate)` in [`windows/src-tauri/src/island.rs`](file:///home/localhost/projects/opensource/coucou/windows/src-tauri/src/island.rs):
+- Verify that when `collapsed = true`, the input shape combine region creates a hit-box anchored at top-center ($x = \text{center} - 120$, $y = 0$, $w = 240$, $h = 16$).
+- When the mouse enters this hit-box on GNOME, front-end mouse enter events seamlessly expand the notch down into the full panel.
 
----
+### Step 4: Verification & Release Build
+- Commit changes and push to GitHub.
+- Track GitHub Actions build run to completion.
+- Provide the user with the new `.deb` release package.
 
-## 2. Updated Task Checklist Status
-
-- [x] Phase 1: Comprehensive Linux & Desktop Environment Integration Research Report & Plan
-- [x] Phase 2: Design & Implement Cross-Platform Abstractions in `shared/` / Rust / Front-end
-- [x] Phase 3: Add Native Linux / GNOME Backend & Desktop Integration Protocols
-- [x] Phase 4: Implement Linux Shell Hook Relays (`coucou-hook` Linux binary / script)
-- [x] Phase 5: Verification & Quality Assurance across Ubuntu Desktop versions (24.04 LTS to 26.04 LTS)
-
----
-<!-- GOAL_COMPLETE -->
+## Verification Checklist
+- [ ] Notch stays at top center ($y = 0$) flush under the GNOME top bar.
+- [ ] Notch is visible across ALL workspaces (stickiness active).
+- [ ] Hovering over the top wake strip expands the notch into full view.
+- [ ] Hovering away/leaving collapses the notch back into the top wake strip.

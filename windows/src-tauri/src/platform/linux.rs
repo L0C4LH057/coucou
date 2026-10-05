@@ -265,6 +265,17 @@ pub fn make_non_activating(win: &WebviewWindow) {
     gw.set_keep_above(true);
     gw.stick();
 
+    // Enforce stickiness and keep-above whenever GTK maps/remaps the window on GNOME/X11
+    gw.connect_map_event(|w, _| {
+        w.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+        w.set_accept_focus(false);
+        w.set_skip_taskbar_hint(true);
+        w.set_skip_pager_hint(true);
+        w.set_keep_above(true);
+        w.stick();
+        gtk::glib::Propagation::Proceed
+    });
+
     // GNOME compositor (Mutter) does NOT support wlr-layer-shell-unstable-v1 protocol.
     // Calling gtk_layer_is_supported() or gtk_layer_init_for_window() on GNOME emits
     // a g_warning and triggers a C-level fatal crash or SIGSEGV inside gtk-layer-shell.

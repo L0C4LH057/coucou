@@ -172,9 +172,15 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let _ = win.set_resizable(true);
     let _ = win.set_size(PhysicalSize::new(pw, ph));
     let _ = win.set_position(PhysicalPosition::new(x, y));
-    // Moving across displays can rescale the window: re-assert the physical size.
+    // Moving across displays or resizing can rescale the window: re-assert physical size and always-on-top
     let _ = win.set_size(PhysicalSize::new(pw, ph));
     let _ = win.set_always_on_top(true);
+    #[cfg(target_os = "linux")]
+    if let Ok(gw) = win.gtk_window() {
+        gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+        gw.set_keep_above(true);
+        gw.stick();
+    }
 }
 
 /// Position, size and scale of the monitor the island lives on. Any change here
