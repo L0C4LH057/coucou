@@ -254,6 +254,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
     
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let is_gnome = desktop.contains("gnome") || desktop.contains("ubuntu");
     let is_wayland = gw.display().type_().name().contains("Wayland");
     
     gw.set_accept_focus(false);
@@ -262,6 +264,14 @@ pub fn make_non_activating(win: &WebviewWindow) {
     gw.set_skip_pager_hint(true);
     gw.set_keep_above(true);
     gw.stick();
+
+    // GNOME compositor (Mutter) does NOT support wlr-layer-shell-unstable-v1 protocol.
+    // Calling gtk_layer_is_supported() or gtk_layer_init_for_window() on GNOME emits
+    // a g_warning and triggers a C-level fatal crash or SIGSEGV inside gtk-layer-shell.
+    if is_gnome {
+        crate::log::line("island is a regular window (GNOME desktop does not support layer-shell)");
+        return;
+    }
 
     let layer_shell = if is_wayland {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layer::LayerShell::open())).ok().flatten()
