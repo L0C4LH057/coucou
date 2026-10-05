@@ -193,6 +193,7 @@ mod layer {
             let container = unsafe {
                 Container::load("libgtk-layer-shell.so.0")
                     .or_else(|_| Container::load("libgtk-layer-shell.so"))
+                    .or_else(|_| Container::load("libgtk-layer-shell.so.0.0.0"))
                     .ok()?
             };
             Some(Self { container })
@@ -203,9 +204,10 @@ mod layer {
         }
 
         pub fn setup_overlay(&self, window: *mut GtkWindow) {
+            let ns = std::ffi::CString::new("coucou").unwrap();
             unsafe {
                 (self.container.gtk_layer_init_for_window)(window);
-                (self.container.gtk_layer_set_namespace)(window, c"coucou".as_ptr());
+                (self.container.gtk_layer_set_namespace)(window, ns.as_ptr());
                 (self.container.gtk_layer_set_layer)(window, LAYER_OVERLAY);
                 (self.container.gtk_layer_set_anchor)(window, EDGE_TOP, 1);
                 (self.container.gtk_layer_set_exclusive_zone)(window, -1);
@@ -252,7 +254,10 @@ pub fn make_non_activating(win: &WebviewWindow) {
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
     let layer_shell = layer::LayerShell::open();
-    let supported = layer_shell.as_ref().map(|ls| ls.is_supported()).unwrap_or(false);
+    let supported = layer_shell
+        .as_ref()
+        .and_then(|ls| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ls.is_supported())).ok())
+        .unwrap_or(false);
     if !wanted || !supported || gw.is_realized() {
         let why = if !wanted {
             "COUCOU_LAYER_SHELL=0"
