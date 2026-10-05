@@ -253,7 +253,8 @@ pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
-    let layer_shell = layer::LayerShell::open();
+    let is_wayland = gw.display().type_().name().contains("Wayland");
+    let layer_shell = if is_wayland { layer::LayerShell::open() } else { None };
     let supported = layer_shell
         .as_ref()
         .and_then(|ls| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ls.is_supported())).ok())
