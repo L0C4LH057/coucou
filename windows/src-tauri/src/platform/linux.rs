@@ -251,14 +251,29 @@ pub fn unblock_webview_drops(_app: &AppHandle) {}
 /// up to the window manager.
 pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
+    
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
     let is_wayland = gw.display().type_().name().contains("Wayland");
-    let layer_shell = if is_wayland { layer::LayerShell::open() } else { None };
+    
+    gw.set_accept_focus(false);
+    gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+    gw.set_skip_taskbar_hint(true);
+    gw.set_skip_pager_hint(true);
+    gw.set_keep_above(true);
+    gw.stick();
+
+    let layer_shell = if is_wayland {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layer::LayerShell::open())).ok().flatten()
+    } else {
+        None
+    };
+    
     let supported = layer_shell
         .as_ref()
         .and_then(|ls| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ls.is_supported())).ok())
         .unwrap_or(false);
+        
     if !wanted || !supported || gw.is_realized() {
         let why = if !wanted {
             "COUCOU_LAYER_SHELL=0"
@@ -268,19 +283,9 @@ pub fn make_non_activating(win: &WebviewWindow) {
             "compositor has no layer-shell"
         };
         crate::log::line(format!("island is a regular window ({why})"));
-        gw.set_accept_focus(false);
-        gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
-        gw.set_skip_taskbar_hint(true);
-        gw.set_skip_pager_hint(true);
-        gw.set_keep_above(true);
-        gw.stick();
         return;
     }
-    gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
-    gw.set_skip_taskbar_hint(true);
-    gw.set_skip_pager_hint(true);
-    gw.set_keep_above(true);
-    gw.stick();
+
     // tao gives undecorated Wayland windows an empty titlebar to force
     // client-side decorations. A layer surface has none, and a client-decorated
     // GtkWindow recomputes its own input region (shadow margins included) on
@@ -288,7 +293,9 @@ pub fn make_non_activating(win: &WebviewWindow) {
     gw.set_titlebar(None::<&gtk::Widget>);
     let ptr = gtk_window_ptr(&gw);
     if let Some(ref ls) = layer_shell {
-        ls.setup_overlay(ptr);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ls.setup_overlay(ptr);
+        }));
     }
     *LAYER_SHELL.lock().unwrap() = layer_shell;
 
